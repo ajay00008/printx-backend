@@ -133,6 +133,17 @@ export async function handleStreamWs(ws, req) {
     return
   }
 
+  // Tell model to accept mixed language (Hindi + English) — "auto" allows code-mixing
+  // so "kya kr rhe ho" gets transcribed when speaking in English mode
+  if (modelWs.readyState === WebSocket.OPEN) {
+    try {
+      modelWs.send(JSON.stringify({ type: 'config', language: 'auto' }))
+      logger.info(`[stream] sent language config: auto (mixed Hindi+English)`)
+    } catch (e) {
+      logger.warn(`[stream] config send failed (model may ignore): ${e.message}`)
+    }
+  }
+
   // Signal browser: model is ready
   ws.send(JSON.stringify({ type: 'auth_success', model: 'Parakeet 600M (NeMo Streaming)', streaming: true, backend: 'gpu' }))
   ws.send(JSON.stringify({ type: 'ready', session_id: session.sessionId, idle_timeout_seconds: 0 }))
