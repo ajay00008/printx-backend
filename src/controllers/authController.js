@@ -8,10 +8,18 @@ function signToken(userId) {
 
 // ---------------------------------------------------------------------------
 // POST /api/auth/login
-// Body: { email, password }
+// Body: { email, password, redirect_uri? } — redirect_uri echoed back so client can redirect to same page as host
 // ---------------------------------------------------------------------------
+function sanitizeRedirectUri(uri) {
+  if (uri == null || typeof uri !== 'string') return null
+  const s = uri.trim()
+  // Must be a relative path (start with /), no protocol, no // (except leading)
+  if (s === '' || !s.startsWith('/') || s.includes('//')) return null
+  return s
+}
+
 export async function login(req, res) {
-  const { email, password } = req.body || {}
+  const { email, password, redirect_uri } = req.body || {}
 
   if (!email || !password) {
     return res.status(400).json({ error: 'Email and password are required' })
@@ -29,11 +37,11 @@ export async function login(req, res) {
   }
 
   const token = signToken(user._id)
+  const payload = { token, user: user.toSafeObject() }
+  const safeRedirect = sanitizeRedirectUri(redirect_uri)
+  if (safeRedirect) payload.redirect_uri = safeRedirect
 
-  res.json({
-    token,
-    user: user.toSafeObject(),
-  })
+  res.json(payload)
 }
 
 // ---------------------------------------------------------------------------

@@ -8,15 +8,22 @@ const rooms = new Map()
 
 export function broadcastToRoom(shareId, payload) {
   const room = rooms.get(shareId)
-  if (!room?.size) return
+  const segmentCount = payload?.segments?.length ?? 0
+  if (!room?.size) {
+    logger.info(`[shareRoom] broadcast skip (no clients) shareId=${shareId} segments=${segmentCount}`)
+    return
+  }
   const msg = JSON.stringify({ type: 'share_update', data: payload })
+  let sent = 0
   for (const ws of [...room]) {
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(msg)
+      sent++
     } else {
       room.delete(ws)
     }
   }
+  logger.info(`[shareRoom] broadcast shareId=${shareId} segments=${segmentCount} clients=${sent}`)
 }
 
 /** Called from the HTTP server upgrade handler for /api/share/:id/ws */

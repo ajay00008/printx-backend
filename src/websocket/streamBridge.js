@@ -16,6 +16,8 @@ import { WebSocket } from 'ws'
 import { decode as msgpackDecode } from '@msgpack/msgpack'
 import { Session } from '../models/Session.js'
 import { RecordingSession } from '../models/RecordingSession.js'
+import { Share, buildSharePayload } from '../models/Share.js'
+import { User } from '../models/User.js'
 import { broadcastToRoom } from './shareRoom.js'
 import { formatTimeMs } from '../utils/formatTime.js'
 import { config } from '../config/env.js'
@@ -92,6 +94,37 @@ async function emitToShareRoom(shareId, accumulatedText, accumulatedSegments, in
   broadcastToRoom(shareId, payload)
 }
 
+/** Persist joiner segments to share's RecordingSession and broadcast. Single source of truth from model response. */
+async function appendToShareSession(shareId, segments, speakerName) {
+  if (!shareId || !segments?.length) return
+  try {
+    const share = await Share.findOne({ shareId })
+    if (!share || share.visibility !== 'public') return
+    const recSessionId = share.recordingSessionId || shareId
+    const recordingSession = await RecordingSession.findOne({ sessionId: recSessionId })
+    if (!recordingSession) return
+
+    const toAdd = segments.map((s) => ({
+      text: (s.text || '').trim(),
+      time: s.time || formatTimeMs(s.timestamp || 0),
+      timestamp: s.timestamp ?? 0,
+      speakerId: null,
+      speakerName: speakerName || 'Guest',
+    })).filter((s) => s.text)
+
+    if (!toAdd.length) return
+    recordingSession.segments.push(...toAdd)
+    recordingSession.fullText = recordingSession.segments.map((s) => s.text).join(' ').trim() || recordingSession.fullText
+    await recordingSession.save()
+
+    const payload = buildSharePayload(share, recordingSession)
+    broadcastToRoom(shareId, payload)
+    logger.info(`[stream] joiner appended to share id=${shareId} count=${toAdd.length} speaker=${speakerName}`)
+  } catch (err) {
+    logger.error(`[stream] appendToShareSession error: ${err.message}`)
+  }
+}
+
 /** Main handler — called for each browser WebSocket connection on /api/stream */
 export async function handleStreamWs(ws, req) {
   const url = new URL(req.url, `http://localhost`)
@@ -157,6 +190,8 @@ export async function handleStreamWs(ws, req) {
   let streamShareId = null          // set from start_stream message
   let recordingSessionId = null     // set from start_stream message; used to persist to RecordingSession
   let shareBaseFromDb = null        // cached RecordingSession for share merge (keeps old data on share page)
+  let isJoinerStream = false        // true when joiner joins share (share_id only, no recordingSessionId from client)
+  let joinerSpeakerName = 'Guest'   // speaker name for joiner segments (from User lookup)
 
   /** Persist current transcript state to MongoDB (merge with existing so we never lose old data) */
   async function persistToMongo(isFinal = false) {
@@ -278,8 +313,15 @@ export async function handleStreamWs(ws, req) {
       logger.info(`[stream] → partial full_text="${fullTextSoFar.slice(0, 80)}..."`)
       ws.send(JSON.stringify({ type: 'partial', text: '', full_text: fullTextSoFar, timestamp_ms: tsMs ,streamShareId}))
       ws.send(JSON.stringify({ type: 'segment_complete', text, time: formatTimeMs(startMs), start_time_ms: startMs, end_time_ms: tsMs, speaker ,streamShareId}))
-      persistToMongo(false)  // non-blocking incremental save
-      await emitToShareRoom(streamShareId, accumulatedText, accumulatedSegments, null, shareBaseFromDb, recordingSessionId)
+
+      if (isJoinerStream) {
+        // Joiner: persist to share's RecordingSession and broadcast (single source of truth from model)
+        const seg = { text, time: formatTimeMs(startMs), timestamp: startMs }
+        await appendToShareSession(streamShareId, [seg], joinerSpeakerName)
+      } else {
+        persistToMongo(false)  // Host: non-blocking incremental save
+        await emitToShareRoom(streamShareId, accumulatedText, accumulatedSegments, null, shareBaseFromDb, recordingSessionId)
+      }
     }
   })
 
@@ -301,11 +343,26 @@ export async function handleStreamWs(ws, req) {
         const recId = (msg.recordingSessionId || msg.recording_session_id || '').trim()
         if (recId) {
           recordingSessionId = recId
+          isJoinerStream = false
           logger.info(`[stream] start_stream: linked recordingSessionId=${recId} userId=${session.userId ?? 'none'}`)
           // Cache persisted base so share page keeps old data when we emit live segments
           RecordingSession.findOne({ sessionId: recId }).lean().then((doc) => {
             if (doc) shareBaseFromDb = { fullText: doc.fullText, segments: doc.segments || [], title: doc.title }
           }).catch(() => {})
+        } else if (streamShareId) {
+          // Joiner flow: share_id only, no recordingSessionId — look up Share and persist segments via append
+          isJoinerStream = true
+          try {
+            const share = await Share.findOne({ shareId: streamShareId }).lean()
+            if (share) recordingSessionId = share.recordingSessionId || streamShareId
+            if (session.userId) {
+              const user = await User.findById(session.userId).select('name').lean()
+              if (user?.name) joinerSpeakerName = user.name
+            }
+            logger.info(`[stream] start_stream: joiner mode shareId=${streamShareId} speaker=${joinerSpeakerName}`)
+          } catch (e) {
+            logger.warn(`[stream] joiner Share lookup: ${e.message}`)
+          }
         }
         ws.send(JSON.stringify({ type: 'session_started' }))
         return

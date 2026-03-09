@@ -31,9 +31,12 @@ const router = Router()
  *               password:
  *                 type: string
  *                 example: Admin123
+ *               redirect_uri:
+ *                 type: string
+ *                 description: Optional; relative path to redirect after login (e.g. /dashboard/record?session=xxx). Echoed back in response so client redirects to same page as host.
  *     responses:
  *       200:
- *         description: Login successful — returns JWT token and user object
+ *         description: Login successful — returns JWT token, user object, and redirect_uri if provided
  *       401:
  *         description: Invalid credentials
  */

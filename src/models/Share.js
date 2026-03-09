@@ -19,7 +19,7 @@ function segmentToPublic(s) {
     time: s.time || '0:00',
     timestamp: ts,
     speakerId: s.speakerId ?? s.speaker ?? null,
-    speakerName: s.speakerName || s.speaker || 'Speaker 1',
+    speakerName: s.speakerName || s.speaker || 'Host',
   }
 }
 
