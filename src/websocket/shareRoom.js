@@ -1,5 +1,6 @@
 import { WebSocket } from 'ws'
-import { Share } from '../models/Share.js'
+import { Share, buildSharePayload } from '../models/Share.js'
+import { RecordingSession } from '../models/RecordingSession.js'
 import { logger } from '../utils/logger.js'
 
 /** share_id → Set<WebSocket> */
@@ -24,18 +25,37 @@ export async function handleShareRoomWs(ws, shareId) {
   rooms.get(shareId).add(ws)
   logger.info(`share room join shareId=${shareId} room_size=${rooms.get(shareId).size}`)
 
-  // Send current share state immediately on connect
+  // Single source of truth: transcript comes from RecordingSession.
+  // shareId = recordingSessionId when share is created from session.
   try {
     const share = await Share.findOne({ shareId })
-    if (share) {
-      ws.send(JSON.stringify({ type: 'share_update', data: share.toPublic() }))
+    const recSessionId = share?.recordingSessionId || shareId
+    const recordingSession = await RecordingSession.findOne({ sessionId: recSessionId }).lean()
+    const payload = buildSharePayload(share, recordingSession, shareId)
+    if (recordingSession) {
+      ws.send(JSON.stringify({ type: 'share_update', data: payload }))
+    } else {
+      ws.send(JSON.stringify({
+        type: 'share_update',
+        data: {
+          ...payload,
+          full_text: '',
+          segments: [],
+          is_live: true,
+        },
+      }))
     }
   } catch (err) {
     logger.error(`share room init error: ${err.message}`)
   }
 
-  // Keep-alive: respond to any message (client may send pings)
-  ws.on('message', () => { /* no-op — room is receive-only */ })
+  // Keep-alive pings — client sends empty pings to detect dropped connections
+  ws.on('message', (raw) => {
+    try {
+      const msg = JSON.parse(raw.toString())
+      if (msg.type === 'ping') ws.send(JSON.stringify({ type: 'pong' }))
+    } catch {}
+  })
 
   ws.on('close', () => {
     const room = rooms.get(shareId)

@@ -1,44 +1,41 @@
 import mongoose from 'mongoose'
 
-const segmentSchema = new mongoose.Schema(
-  {
-    text: { type: String, required: true },
-    time: { type: String, default: '0:00' },
-    timestamp: { type: Number, default: 0 },
-    speakerId: { type: String, default: null },
-    speakerName: { type: String, default: 'Speaker 1' },
-  },
-  { _id: false }
-)
-
 const shareSchema = new mongoose.Schema(
   {
     shareId: { type: String, required: true, unique: true, index: true },
+    recordingSessionId: { type: String, index: true },
     title: { type: String, default: 'Shared transcript' },
-    fullText: { type: String, default: ' ' },
-    segments: { type: [segmentSchema], default: [] },
     visibility: { type: String, enum: ['public', 'restricted'], default: 'restricted' },
     recordingUrl: { type: String, default: null },
   },
   { timestamps: true }
 )
 
-/** Build the public-facing payload shape (same as Python _share_build_out) */
-shareSchema.methods.toPublic = function () {
+/** Normalize RecordingSession segment to share payload shape */
+function segmentToPublic(s) {
+  const ts = s.timestamp ?? s.start_time_ms ?? 0
   return {
-    share_id: this.shareId,
-    title: this.title,
-    full_text: this.fullText,
-    segments: this.segments.map((s) => ({
-      text: s.text,
-      time: s.time,
-      timestamp: s.timestamp,
-      speakerId: s.speakerId,
-      speakerName: s.speakerName,
-    })),
-    created_at: this.createdAt?.getTime() / 1000,
-    visibility: this.visibility,
-    recording_url: this.recordingUrl || undefined,
+    text: s.text || '',
+    time: s.time || '0:00',
+    timestamp: ts,
+    speakerId: s.speakerId ?? s.speaker ?? null,
+    speakerName: s.speakerName || s.speaker || 'Speaker 1',
+  }
+}
+
+/** Build public payload from Share metadata + RecordingSession transcript (single source of truth) */
+export function buildSharePayload(share, recordingSession, fallbackShareId) {
+  const fullText = recordingSession?.fullText ?? ''
+  const segments = (recordingSession?.segments ?? []).map(segmentToPublic)
+  return {
+    share_id: share?.shareId ?? recordingSession?.sessionId ?? fallbackShareId,
+    title: share?.title ?? recordingSession?.title ?? 'Shared transcript',
+    full_text: fullText || ' ',
+    segments,
+    partial_text: '',
+    created_at: (share?.createdAt ?? recordingSession?.createdAt)?.getTime?.() / 1000 ?? Date.now() / 1000,
+    visibility: share?.visibility ?? 'public',
+    recording_url: share?.recordingUrl || undefined,
   }
 }
 

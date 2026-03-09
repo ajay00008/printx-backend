@@ -15,7 +15,6 @@
 import { WebSocket } from 'ws'
 import { decode as msgpackDecode } from '@msgpack/msgpack'
 import { Session } from '../models/Session.js'
-import { Share } from '../models/Share.js'
 import { RecordingSession } from '../models/RecordingSession.js'
 import { broadcastToRoom } from './shareRoom.js'
 import { formatTimeMs } from '../utils/formatTime.js'
@@ -47,36 +46,50 @@ async function connectModel() {
   })
 }
 
-/** Emit live transcript snapshot to the share room (without persisting) */
-async function emitToShareRoom(shareId, accumulatedText, accumulatedSegments, interimText) {
-  if (!shareId) return
-  try {
-    const share = await Share.findOne({ shareId })
-    if (!share) return
-
-    const existingSegs = share.segments.map((s) => s.toObject?.() ?? s)
-    const liveSegs = accumulatedSegments.map((s) => ({
-      text: s.text,
-      time: formatTimeMs(s.startMs),
-      timestamp: s.startMs,
-      speakerName: 'Guest',
-    }))
-
-    let base = [share.fullText.trim(), accumulatedText.join(' ')].filter(Boolean).join(' ').trim()
-    if (interimText?.trim()) base = `${base} ${interimText.trim()}`.trim()
-
-    const payload = {
-      share_id: shareId,
-      title: share.title,
-      full_text: base || share.fullText,
-      segments: [...existingSegs, ...liveSegs],
-      created_at: share.createdAt.getTime() / 1000,
-      visibility: share.visibility,
-    }
-    broadcastToRoom(shareId, payload)
-  } catch (err) {
-    logger.error(`emitToShareRoom error: ${err.message}`)
+/** Normalize segment to share payload shape */
+function toShareSegment(s) {
+  const ts = s.timestamp ?? s.start_time_ms ?? 0
+  return {
+    text: s.text || '',
+    time: s.time || formatTimeMs(ts),
+    timestamp: ts,
+    speakerId: s.speakerId ?? s.speaker ?? null,
+    speakerName: s.speakerName || s.speaker || 'Host',
   }
+}
+
+/** Emit live transcript snapshot to the share room. Merges with persisted base so share page keeps old data. */
+async function emitToShareRoom(shareId, accumulatedText, accumulatedSegments, interimText, baseFromDb, recSessionId) {
+  if (!shareId) return
+
+  let base = baseFromDb
+  if (!base && recSessionId) {
+    try {
+      const doc = await RecordingSession.findOne({ sessionId: recSessionId }).lean()
+      if (doc) base = { fullText: doc.fullText, segments: doc.segments || [], title: doc.title }
+    } catch {}
+  }
+
+  const liveSegs = accumulatedSegments.map(toShareSegment)
+  const baseSegs = ((base || baseFromDb)?.segments || []).map(toShareSegment)
+  const allSegments = [...baseSegs, ...liveSegs]
+
+  const liveFullText = accumulatedText.join(' ').trim()
+  const baseFullText = ((base || baseFromDb)?.fullText || '').trim()
+  let fullText = baseFullText ? `${baseFullText} ${liveFullText}`.trim() : liveFullText
+  if (interimText?.trim()) fullText = `${fullText} ${interimText.trim()}`.trim()
+
+  const payload = {
+    share_id: shareId,
+    title: (base || baseFromDb)?.title || 'Live Recording',
+    full_text: fullText || ' ',
+    segments: allSegments,
+    partial_text: interimText?.trim() || '',
+    created_at: Date.now() / 1000,
+    visibility: 'public',
+    is_live: true,
+  }
+  broadcastToRoom(shareId, payload)
 }
 
 /** Main handler — called for each browser WebSocket connection on /api/stream */
@@ -132,17 +145,30 @@ export async function handleStreamWs(ws, req) {
   const PAUSE_MS = 1750
   let streamShareId = null          // set from start_stream message
   let recordingSessionId = null     // set from start_stream message; used to persist to RecordingSession
+  let shareBaseFromDb = null        // cached RecordingSession for share merge (keeps old data on share page)
 
-  /** Persist current transcript state to MongoDB (non-blocking, best-effort) */
+  /** Persist current transcript state to MongoDB (merge with existing so we never lose old data) */
   async function persistToMongo(isFinal = false) {
     if (!recordingSessionId || !session.userId) return
     try {
-      const fullText = accumulatedText.join(' ').trim()
+      let base = shareBaseFromDb
+      if (!base) {
+        const doc = await RecordingSession.findOne({ sessionId: recordingSessionId }).lean()
+        if (doc) {
+          base = { fullText: doc.fullText, segments: doc.segments || [], title: doc.title }
+          shareBaseFromDb = base
+        }
+      }
+      const liveFullText = accumulatedText.join(' ').trim()
+      const baseFullText = (base?.fullText || '').trim()
+      const fullText = baseFullText ? `${baseFullText} ${liveFullText}`.trim() : liveFullText
+      const baseSegs = base?.segments || []
+      const mergedSegments = [...baseSegs, ...accumulatedSegments]
       const durationSeconds = Math.floor((Date.now() - sessionStartMs) / 1000)
       const update = {
         $set: {
           fullText,
-          segments: accumulatedSegments,
+          segments: mergedSegments,
           wordCount: fullText.split(/\s+/).filter(Boolean).length,
           duration: durationSeconds,
           updatedAt: new Date(),
@@ -153,7 +179,7 @@ export async function handleStreamWs(ws, req) {
         update
       )
       if (isFinal) {
-        logger.info(`[stream] persisted FINAL to MongoDB recSessId=${recordingSessionId} chars=${fullText.length} segs=${accumulatedSegments.length} duration=${durationSeconds}s`)
+        logger.info(`[stream] persisted FINAL to MongoDB recSessId=${recordingSessionId} chars=${fullText.length} segs=${mergedSegments.length} duration=${durationSeconds}s`)
       }
     } catch (err) {
       logger.error(`[stream] persistToMongo error: ${err.message}`)
@@ -175,7 +201,7 @@ export async function handleStreamWs(ws, req) {
       await persistToMongo(true)
       ws.send(JSON.stringify({ type: 'final', full_text: fullText, segments: accumulatedSegments }))
       ws.send(JSON.stringify({ type: 'stopped', full_text: fullText, segments: accumulatedSegments }))
-      await emitToShareRoom(streamShareId, accumulatedText, accumulatedSegments, null)
+      await emitToShareRoom(streamShareId, accumulatedText, accumulatedSegments, null, shareBaseFromDb, recordingSessionId)
       ws.send(JSON.stringify({ type: 'session_ended' }))
       return
     }
@@ -194,7 +220,7 @@ export async function handleStreamWs(ws, req) {
       await persistToMongo(true)
       ws.send(JSON.stringify({ type: 'final', full_text: fullText, segments: accumulatedSegments }))
       ws.send(JSON.stringify({ type: 'stopped', full_text: fullText, segments: accumulatedSegments }))
-      await emitToShareRoom(streamShareId, accumulatedText, accumulatedSegments, null)
+      await emitToShareRoom(streamShareId, accumulatedText, accumulatedSegments, null, shareBaseFromDb, recordingSessionId)
       ws.send(JSON.stringify({ type: 'session_ended' }))
       return
     }
@@ -215,14 +241,14 @@ export async function handleStreamWs(ws, req) {
     if (!isFinal) {
       // Interim: forward to browser and share room
       logger.info(`[stream] interim → "${text.slice(0, 60)}"`)
-      ws.send(JSON.stringify({ type: 'interim', text, timestamp_ms: tsMs }))
-      await emitToShareRoom(streamShareId, accumulatedText, accumulatedSegments, text)
+      ws.send(JSON.stringify({ type: 'interim', text, timestamp_ms: tsMs ,streamShareId}))
+      await emitToShareRoom(streamShareId, accumulatedText, accumulatedSegments, text, shareBaseFromDb, recordingSessionId)
     } else {
       // Final chunk from model — accumulate and emit to browser
       logger.info(`[stream] FINAL chunk → "${text}" speaker=${speaker} tsMs=${tsMs} (total chunks=${accumulatedText.length + 1})`)
 
       if (lastFinalMs && (tsMs - lastFinalMs) >= PAUSE_MS) {
-        ws.send(JSON.stringify({ type: 'segment_complete', text: '', time: formatTimeMs(tsMs), start_time_ms: tsMs, end_time_ms: tsMs }))
+        ws.send(JSON.stringify({ type: 'segment_complete', text: '', time: formatTimeMs(tsMs), start_time_ms: tsMs, end_time_ms: tsMs ,streamShareId}))
       }
       lastFinalMs = tsMs
 
@@ -239,10 +265,10 @@ export async function handleStreamWs(ws, req) {
 
       const fullTextSoFar = accumulatedText.join(' ')
       logger.info(`[stream] → partial full_text="${fullTextSoFar.slice(0, 80)}..."`)
-      ws.send(JSON.stringify({ type: 'partial', text: '', full_text: fullTextSoFar, timestamp_ms: tsMs }))
-      ws.send(JSON.stringify({ type: 'segment_complete', text, time: formatTimeMs(startMs), start_time_ms: startMs, end_time_ms: tsMs, speaker }))
+      ws.send(JSON.stringify({ type: 'partial', text: '', full_text: fullTextSoFar, timestamp_ms: tsMs ,streamShareId}))
+      ws.send(JSON.stringify({ type: 'segment_complete', text, time: formatTimeMs(startMs), start_time_ms: startMs, end_time_ms: tsMs, speaker ,streamShareId}))
       persistToMongo(false)  // non-blocking incremental save
-      await emitToShareRoom(streamShareId, accumulatedText, accumulatedSegments, null)
+      await emitToShareRoom(streamShareId, accumulatedText, accumulatedSegments, null, shareBaseFromDb, recordingSessionId)
     }
   })
 
@@ -265,6 +291,10 @@ export async function handleStreamWs(ws, req) {
         if (recId) {
           recordingSessionId = recId
           logger.info(`[stream] start_stream: linked recordingSessionId=${recId} userId=${session.userId ?? 'none'}`)
+          // Cache persisted base so share page keeps old data when we emit live segments
+          RecordingSession.findOne({ sessionId: recId }).lean().then((doc) => {
+            if (doc) shareBaseFromDb = { fullText: doc.fullText, segments: doc.segments || [], title: doc.title }
+          }).catch(() => {})
         }
         ws.send(JSON.stringify({ type: 'session_started' }))
         return
