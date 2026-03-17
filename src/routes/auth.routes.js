@@ -1,5 +1,15 @@
 import { Router } from 'express'
-import { login, signup, me, listUsers, deactivateUser } from '../controllers/authController.js'
+import {
+  login,
+  signup,
+  me,
+  listUsers,
+  deactivateUser,
+  forgotPassword,
+  resetPassword,
+  verifyEmail,
+  resendVerificationEmail,
+} from '../controllers/authController.js'
 import { requireAuth, requireRole } from '../middleware/auth.js'
 
 const router = Router()
@@ -74,6 +84,11 @@ router.post('/api/auth/login', login)
  *         description: Email already exists
  */
 router.post('/api/auth/signup', signup)
+
+router.post('/api/auth/forgot-password', forgotPassword)
+router.post('/api/auth/reset-password', resetPassword)
+router.post('/api/auth/verify-email', verifyEmail)
+router.post('/api/auth/resend-verification-email', resendVerificationEmail)
 
 /**
  * @swagger
