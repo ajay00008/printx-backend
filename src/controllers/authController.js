@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken'
 import { config } from '../config/env.js'
 import { User } from '../models/User.js'
+import { getUsageForUserId } from './usageController.js'
 
 function signToken(userId) {
   return jwt.sign({ sub: userId }, config.jwtSecret, { expiresIn: config.jwtExpiresIn })
@@ -84,11 +85,46 @@ export async function me(req, res) {
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/auth/users  (admin-only — list all users)
+// GET /api/auth/users  (admin-only — list users, paginated + searchable)
 // ---------------------------------------------------------------------------
 export async function listUsers(req, res) {
-  const users = await User.find({}).select('-password').sort({ createdAt: -1 })
-  res.json(users)
+  const page = Math.max(1, Number(req.query.page) || 1)
+  const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20))
+  const q = (req.query.q || '').toString().trim()
+
+  const filter = q
+    ? {
+        $or: [
+          { name: { $regex: q, $options: 'i' } },
+          { email: { $regex: q, $options: 'i' } },
+        ],
+      }
+    : {}
+
+  const [userDocs, total] = await Promise.all([
+    User.find(filter)
+      .select('-password')
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * pageSize)
+      .limit(pageSize)
+      .lean(),
+    User.countDocuments(filter),
+  ])
+
+  const items = await Promise.all(
+    userDocs.map(async (u) => {
+      const usage = await getUsageForUserId(u._id, u.timezone || 'UTC')
+      return { ...u, usage }
+    })
+  )
+
+  res.json({
+    items,
+    total,
+    page,
+    pageSize,
+    totalPages: Math.max(1, Math.ceil(total / pageSize)),
+  })
 }
 
 // ---------------------------------------------------------------------------

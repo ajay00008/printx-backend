@@ -70,6 +70,16 @@ export async function getUsageSummary(req, res) {
   })
 }
 
+/**
+ * Get usage payload for a user (used by admin user listing).
+ * Returns { daily, monthly } with usedSeconds, remainingSeconds, limitSeconds.
+ */
+export async function getUsageForUserId(userId, timezone = 'UTC') {
+  const tz = typeof timezone === 'string' && timezone.trim() ? timezone.trim() : 'UTC'
+  const { dailyUsed, monthlyUsed } = await getUsedSeconds(userId, tz, null, 0)
+  return buildUsagePayload(dailyUsed, monthlyUsed)
+}
+
 export async function startUsageSession(req, res) {
   const user = req.user
   const { feature, recordingSessionId, timezone: bodyTz } = req.body || {}
@@ -100,10 +110,10 @@ export async function startUsageSession(req, res) {
   const usage = buildUsagePayload(dailyUsed, monthlyUsed)
 
   if (usage.daily.remainingSeconds <= 0) {
-    return res.status(200).json({ canContinue: false, reason: 'daily_limit', usage })
+    return res.status(429).json({ error: 'Daily usage limit reached', canContinue: false, reason: 'daily_limit', usage })
   }
   if (usage.monthly.remainingSeconds <= 0) {
-    return res.status(200).json({ canContinue: false, reason: 'monthly_limit', usage })
+    return res.status(429).json({ error: 'Monthly usage limit reached', canContinue: false, reason: 'monthly_limit', usage })
   }
 
   res.status(201).json({
