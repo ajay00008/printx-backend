@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { requireAuth } from '../middleware/auth.js'
 import {
   listMeetings, createMeeting, joinMeeting, endMeeting, deleteMeeting,
   listParticipants, listSpeakers, addSpeaker, updateSpeaker, removeSpeaker, assignSpeaker,
@@ -44,10 +45,10 @@ router.post('/api/meetings/:meeting_id/join', joinMeeting)
 router.post('/api/meetings/:meeting_id/end', endMeeting)
 router.delete('/api/meetings/:meeting_id', deleteMeeting)
 router.get('/api/meetings/:meeting_id/participants', listParticipants)
-router.get('/api/sessions/:session_id/speakers', listSpeakers)
-router.post('/api/sessions/:session_id/speakers', addSpeaker)
-router.put('/api/sessions/:session_id/speakers/:speaker_id', updateSpeaker)
-router.delete('/api/sessions/:session_id/speakers/:speaker_id', removeSpeaker)
-router.post('/api/sessions/:session_id/speakers/:speaker_id/assign/:segment_index', assignSpeaker)
+router.get('/api/sessions/:session_id/speakers', requireAuth, listSpeakers)
+router.post('/api/sessions/:session_id/speakers', requireAuth, addSpeaker)
+router.put('/api/sessions/:session_id/speakers/:speaker_id', requireAuth, updateSpeaker)
+router.delete('/api/sessions/:session_id/speakers/:speaker_id', requireAuth, removeSpeaker)
+router.post('/api/sessions/:session_id/speakers/:speaker_id/assign/:segment_index', requireAuth, assignSpeaker)
 
 export default router

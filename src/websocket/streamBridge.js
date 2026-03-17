@@ -18,7 +18,7 @@ import { Session } from '../models/Session.js'
 import { RecordingSession } from '../models/RecordingSession.js'
 import { Share, buildSharePayload } from '../models/Share.js'
 import { User } from '../models/User.js'
-import { broadcastToRoom } from './shareRoom.js'
+import { broadcastToRoom, broadcastParticipantJoined } from './shareRoom.js'
 import { formatTimeMs } from '../utils/formatTime.js'
 import { config } from '../config/env.js'
 import { logger } from '../utils/logger.js'
@@ -360,6 +360,8 @@ export async function handleStreamWs(ws, req) {
               if (user?.name) joinerSpeakerName = user.name
             }
             logger.info(`[stream] start_stream: joiner mode shareId=${streamShareId} speaker=${joinerSpeakerName}`)
+            // Notify share room so host can add/update speaker for this joiner
+            broadcastParticipantJoined(streamShareId, session.userId.toString(), joinerSpeakerName)
           } catch (e) {
             logger.warn(`[stream] joiner Share lookup: ${e.message}`)
           }

@@ -22,6 +22,21 @@ const timestampedWordSchema = new mongoose.Schema(
   { _id: false }
 )
 
+const speakerSchema = new mongoose.Schema(
+  {
+    id: { type: String, required: true },
+    name: { type: String, required: true, default: 'Speaker' },
+    userId: { type: String, default: null },
+    is_host: { type: Boolean, default: false },
+    color_index: { type: Number, default: 0 },
+    word_count: { type: Number, default: 0 },
+    speaking_time: { type: Number, default: 0 },
+    avatar: { type: String, default: null },
+    email: { type: String, default: null },
+  },
+  { _id: false }
+)
+
 const recordingSessionSchema = new mongoose.Schema(
   {
     sessionId: { type: String, required: true, unique: true, index: true },
@@ -31,6 +46,7 @@ const recordingSessionSchema = new mongoose.Schema(
     fullText: { type: String, default: '' },
     segments: { type: [segmentSchema], default: [] },
     timestampedWords: { type: [timestampedWordSchema], default: [] },
+    speakers: { type: [speakerSchema], default: [] },
     duration: { type: Number, default: 0 },
     wordCount: { type: Number, default: 0 },
     hasAudio: { type: Boolean, default: false },

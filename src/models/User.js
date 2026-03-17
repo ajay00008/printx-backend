@@ -30,6 +30,15 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    country: { type: String, trim: true, maxlength: 2 }, // ISO 3166-1 alpha-2 for compliance
+    state: { type: String, trim: true },
+    city: { type: String, trim: true },
+    emailVerified: { type: Boolean, default: false },
+    emailVerifiedAt: { type: Date },
+    passwordResetToken: { type: String },
+    passwordResetExpires: { type: Date },
+    emailVerificationOtpHash: { type: String },
+    emailVerificationOtpExpires: { type: Date },
   },
   { timestamps: true }
 )
@@ -46,10 +55,14 @@ userSchema.methods.comparePassword = async function (plain) {
   return bcrypt.compare(plain, this.password)
 }
 
-// Strip password from JSON output
+// Strip password and sensitive fields from JSON output
 userSchema.methods.toSafeObject = function () {
   const obj = this.toObject()
   delete obj.password
+  delete obj.passwordResetToken
+  delete obj.passwordResetExpires
+  delete obj.emailVerificationOtpHash
+  delete obj.emailVerificationOtpExpires
   return obj
 }
 

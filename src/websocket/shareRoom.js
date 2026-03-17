@@ -26,6 +26,26 @@ export function broadcastToRoom(shareId, payload) {
   logger.info(`[shareRoom] broadcast shareId=${shareId} segments=${segmentCount} clients=${sent}`)
 }
 
+/** Notify room that a participant (joiner) joined — host can add/update speaker for display */
+export function broadcastParticipantJoined(shareId, userId, name) {
+  const room = rooms.get(shareId)
+  if (!room?.size) {
+    logger.info(`[shareRoom] participant_joined skip (no clients) shareId=${shareId}`)
+    return
+  }
+  const msg = JSON.stringify({ type: 'participant_joined', data: { userId, name } })
+  let sent = 0
+  for (const ws of [...room]) {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(msg)
+      sent++
+    } else {
+      room.delete(ws)
+    }
+  }
+  logger.info(`[shareRoom] participant_joined shareId=${shareId} userId=${userId} name=${name} clients=${sent}`)
+}
+
 /** Called from the HTTP server upgrade handler for /api/share/:id/ws */
 export async function handleShareRoomWs(ws, shareId) {
   if (!rooms.has(shareId)) rooms.set(shareId, new Set())
