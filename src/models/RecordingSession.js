@@ -34,6 +34,10 @@ const recordingSessionSchema = new mongoose.Schema(
     duration: { type: Number, default: 0 },
     wordCount: { type: Number, default: 0 },
     hasAudio: { type: Boolean, default: false },
+    /** For usage limits: YYYY-MM-DD and YYYY-MM in user's timezone when session was created */
+    sessionDayKey: { type: String, default: null, index: true },
+    sessionMonthKey: { type: String, default: null, index: true },
+    timezone: { type: String, default: null },
   },
   { timestamps: true }
 )

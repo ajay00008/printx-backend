@@ -1,5 +1,6 @@
 import { RecordingSession } from '../models/RecordingSession.js'
 import { logger } from '../utils/logger.js'
+import { getLocalPeriodKeys } from '../utils/usageLimits.js'
 
 function toPublic(s) {
   return {
@@ -25,15 +26,27 @@ export async function listSessions(req, res) {
   res.json(sessions.map(toPublic))
 }
 
+function getTimezone(req) {
+  const tz = req.body?.timezone || req.user?.timezone || req.headers['x-timezone']
+  return (typeof tz === 'string' && tz.trim()) ? tz.trim() : 'UTC'
+}
+
 export async function createSession(req, res) {
   const { sessionId, title, language } = req.body
   if (!sessionId) return res.status(400).json({ error: 'sessionId is required' })
+
+  const timezone = getTimezone(req)
+  const now = new Date()
+  const { dayKey, monthKey } = getLocalPeriodKeys(now, timezone)
 
   const session = await RecordingSession.create({
     sessionId,
     userId: req.user._id,
     title: title || '',
     language: language || 'en',
+    sessionDayKey: dayKey,
+    sessionMonthKey: monthKey,
+    timezone,
   })
   logger.info(`recording session created id=${sessionId} user=${req.user.email}`)
   res.status(201).json(toPublic(session.toObject()))

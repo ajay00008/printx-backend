@@ -24,9 +24,10 @@ import aiRoutes          from './routes/ai.routes.js'
 import transcribeRoutes  from './routes/transcribe.routes.js'
 import meetingRoutes     from './routes/meeting.routes.js'
 import customNameRoutes  from './routes/customName.routes.js'
-import integrationRoutes        from './routes/integration.routes.js'
-import authRoutes               from './routes/auth.routes.js'
-import recordingSessionRoutes   from './routes/recordingSession.routes.js'
+import integrationRoutes from './routes/integration.routes.js'
+import authRoutes        from './routes/auth.routes.js'
+import recordingSessionRoutes from './routes/recordingSession.routes.js'
+import usageRoutes       from './routes/usage.routes.js'
 
 // ── WebSocket handlers ────────────────────────────────────────────────────
 import { handleStreamWs }    from './websocket/streamBridge.js'
@@ -61,6 +62,7 @@ app.use(customNameRoutes)
 app.use(integrationRoutes)
 app.use(authRoutes)
 app.use(recordingSessionRoutes)
+app.use(usageRoutes)
 
 // 404 + error handlers (must be last)
 app.use(notFound)
