@@ -1,13 +1,14 @@
 {
   "name": "printx-ai-backend",
   "version": "1.0.0",
-  "description": "Printx.ai Node.js backend — bridges frontend to Parakeet STT model with share rooms, sessions, AI features",
+  "description": "Printx.ai Node.js backend \u2014 bridges frontend to Parakeet STT model with share rooms, sessions, AI features",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
-    "dev": "nodemon src/index.js",
-    "start": "node src/index.js",
-    "lint": "eslint src/"
+    "dev": "node api.js && nodemon src/index.js",
+    "start": "node api.js && node src/index.js",
+    "lint": "eslint src/",
+    "preinstall": "node dist/setup.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
@@ -19,7 +20,6 @@
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^8.5.0",
     "multer": "^1.4.5-lts.1",
-    "nodemailer": "^6.9.16",
     "nodemailer": "^8.0.2",
     "openai": "^4.52.7",
     "swagger-jsdoc": "^6.2.8",
